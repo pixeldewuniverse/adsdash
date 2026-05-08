@@ -1,4 +1,4 @@
-type Tab = 'overview' | 'campaign' | 'creative' | 'audience' | 'budget' | 'conversion' | 'settings' | 'campaigns' | 'datainput'
+import type { Tab } from '../types/global'
 
 interface Props {
   activeTab: Tab

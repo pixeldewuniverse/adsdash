@@ -1,3 +1,4 @@
+export type Tab = 'overview' | 'campaign' | 'creative' | 'audience' | 'budget' | 'conversion' | 'settings' | 'campaigns' | 'datainput' | 'users'
 export interface DailyRow {
     report_date: string
     spend: number

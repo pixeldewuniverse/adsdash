@@ -4,14 +4,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [
-    react({
-      babel: {
-        plugins: []
-      }
-    }),
+    react(),
     tailwindcss(),
   ],
-  esbuild: {
-    logOverride: { 'this-is-undefined-in-esm': 'silent' }
-  },
 })

@@ -236,14 +236,17 @@ export default function AdsSettingTab() {
     setStep(s => Math.min(5, s + 1))
   }
 
-    const handleSubmit = async () => {
-      setLoading(true)
-      alert('Submit dimulai - platform: ' + form.platform + ', client: ' + form.client_id) // ← tambah di sini
-      try {
+  const handleSubmit = async () => {
+    setLoading(true)
+    try {
+      alert('Step 1: mulai submit')
+      
       const { data: platformData } = await supabase.from('dim_platforms').select('platform_id').eq('platform_name', form.platform).single()
-      if (!platformData) { alert('Platform tidak ditemukan'); return }
+      alert('Step 2: platform = ' + JSON.stringify(platformData))
+      
+      if (!platformData) { alert('Platform tidak ditemukan'); setLoading(false); return }
       const platformId = platformData.platform_id
-
+  
       const { data: campaign, error: campError } = await supabase.from('dim_campaigns').insert({
         client_id: form.client_id,
         platform_id: platformId,
@@ -261,6 +264,8 @@ export default function AdsSettingTab() {
         pixel_id: form.metrics.pixel_id || null,
         status: 'Active',
       }).select().single()
+      alert('Step 3: campaign = ' + JSON.stringify(campaign) + ' | error = ' + JSON.stringify(campError))
+    
 
       if (campError || !campaign) { alert('Gagal simpan campaign: ' + campError?.message); return }
 

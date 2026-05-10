@@ -54,7 +54,7 @@ function getPacingColor(status: string) {
   return '#EF9F27'
 }
 
-export default function BudgetTab({ clientId = 'all' }: { clientId?: string }) {
+export default function BudgetTab({ clientId = 'all', globalData: _globalData }: { clientId?: string; globalData?: unknown }) {
   const [campaigns, setCampaigns] = useState<CampaignBudget[]>([])
   const [dailyData, setDailyData] = useState<{ day: string; spend: number; cumulative: number }[]>([])
   const [loading, setLoading] = useState(true)

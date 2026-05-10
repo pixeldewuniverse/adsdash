@@ -16,7 +16,7 @@ import { supabase } from './lib/supabase'
 import UserManagementTab from './tabs/UserManagementTab'
 import type { DailyRow, GlobalData } from './types/global'
 
-type Tab = 'overview' | 'campaign' | 'creative' | 'audience' | 'budget' | 'conversion' | 'settings' | 'campaigns' | 'datainput' | 'users'
+import type { Tab } from './types/global'
 
 function App() {
   const { user, profile, loading, signOut } = useAuth()

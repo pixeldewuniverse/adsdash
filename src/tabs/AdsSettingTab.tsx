@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { useAuth } from '../AuthContext'
 
 const PLATFORMS = ['Meta', 'Google', 'TikTok']
 
@@ -86,6 +87,8 @@ const initialForm: FormData = {
   placements: [], metrics: {}, ads: [emptyAd()],
 }
 
+// ─── UI Components ────────────────────────────────────────────────────────────
+
 function StepIndicator({ current, total }: { current: number; total: number }) {
   const labels = ['Client & Platform', 'Campaign', 'Ad Set', 'Creatives', 'Review']
   return (
@@ -128,15 +131,23 @@ function Label({ children, required }: { children: string; required?: boolean })
 
 function Input({ value, onChange, placeholder, type = 'text' }: { value: string; onChange: (v: string) => void; placeholder?: string; type?: string }) {
   return (
-    <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-      style={{ width: '100%', padding: '8px 10px', fontSize: '12px', border: '0.5px solid rgba(0,0,0,0.2)', borderRadius: '6px', background: '#fff', color: '#1a1a1a', outline: 'none' }} />
+    <input
+      type={type}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      placeholder={placeholder}
+      style={{ width: '100%', padding: '8px 10px', fontSize: '12px', border: '0.5px solid rgba(0,0,0,0.2)', borderRadius: '6px', background: '#fff', color: '#1a1a1a', outline: 'none', boxSizing: 'border-box' }}
+    />
   )
 }
 
 function Select({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: string[] }) {
   return (
-    <select value={value} onChange={e => onChange(e.target.value)}
-      style={{ width: '100%', padding: '8px 10px', fontSize: '12px', border: '0.5px solid rgba(0,0,0,0.2)', borderRadius: '6px', background: '#fff', color: value ? '#1a1a1a' : '#888', outline: 'none' }}>
+    <select
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      style={{ width: '100%', padding: '8px 10px', fontSize: '12px', border: '0.5px solid rgba(0,0,0,0.2)', borderRadius: '6px', background: '#fff', color: value ? '#1a1a1a' : '#888', outline: 'none' }}
+    >
       <option value="">— Pilih —</option>
       {options.map(o => <option key={o} value={o}>{o}</option>)}
     </select>
@@ -173,19 +184,44 @@ function ReviewRow({ label, value, highlight }: { label: string; value: string; 
   )
 }
 
+// ─── Error Banner ─────────────────────────────────────────────────────────────
+
+function ErrorBanner({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <div style={{
+      background: '#FCEBEB', border: '1px solid #E24B4A', borderRadius: '8px',
+      padding: '12px 16px', marginBottom: '16px', display: 'flex',
+      justifyContent: 'space-between', alignItems: 'center',
+    }}>
+      <span style={{ fontSize: '12px', color: '#A32D2D' }}>⚠ {message}</span>
+      <button onClick={onDismiss} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#A32D2D', fontSize: '14px', padding: '0 4px' }}>✕</button>
+    </div>
+  )
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
 export default function AdsSettingTab() {
+  const { user } = useAuth() // ✅ FIX: ambil user dari AuthContext
   const [step, setStep] = useState(1)
   const [form, setForm] = useState<FormData>(initialForm)
   const [submitted, setSubmitted] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [clients, setClients] = useState<{ client_id: string; client_name: string; business_type: string | null }[]>([])
   const fileRefs = useRef<Record<string, HTMLInputElement | null>>({})
 
   useEffect(() => {
-    supabase.from('dim_clients').select('client_id, client_name, business_type')
-      .eq('is_active', true).order('client_name')
-      .then(({ data }) => { if (data) setClients(data) })
+    supabase
+      .from('dim_clients')
+      .select('client_id, client_name, business_type')
+      .eq('is_active', true)
+      .order('client_name')
+      .then(({ data, error }) => {
+        if (error) console.error('Gagal load clients:', error.message)
+        if (data) setClients(data)
+      })
   }, [])
 
   const set = (key: keyof FormData, value: unknown) => setForm(f => ({ ...f, [key]: value }))
@@ -237,69 +273,111 @@ export default function AdsSettingTab() {
   }
 
   const handleSubmit = async () => {
+    setSubmitError(null)
     setLoading(true)
+
     try {
-      alert('Step 1: mulai submit')
-      
-      const { data: platformData } = await supabase.from('dim_platforms').select('platform_id').eq('platform_name', form.platform).single()
-      alert('Step 2: platform = ' + JSON.stringify(platformData))
-      
-      if (!platformData) { alert('Platform tidak ditemukan'); setLoading(false); return }
+      // ✅ FIX 1: Verifikasi session aktif sebelum semua DB call
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError || !session) {
+        setSubmitError('Sesi tidak valid. Silakan login ulang.')
+        window.location.href = '/login'
+        return
+      }
+
+      // ✅ FIX 2: Cek error dari dim_platforms query (sebelumnya tidak dicek)
+      const { data: platformData, error: platformError } = await supabase
+        .from('dim_platforms')
+        .select('platform_id')
+        .eq('platform_name', form.platform)
+        .eq('is_active', true)
+        .single()
+
+      if (platformError || !platformData) {
+        setSubmitError(`Platform "${form.platform}" tidak ditemukan di database. Pastikan tabel dim_platforms sudah terisi. Error: ${platformError?.message ?? 'data null'}`)
+        return
+      }
+
       const platformId = platformData.platform_id
-  
-      const { data: campaign, error: campError } = await supabase.from('dim_campaigns').insert({
-        client_id: form.client_id,
-        platform_id: platformId,
-        campaign_name: form.campaign_name,
-        objective: form.objective,
-        budget_type: form.budget_type,
-        daily_budget: form.budget_type === 'daily' ? Number(form.daily_budget) : null,
-        allocated_budget: form.budget_type === 'lifetime' ? Number(form.lifetime_budget) : null,
-        start_date: form.start_date || null,
-        end_date: form.end_date || null,
-        target_roas: form.metrics.target_roas ? Number(form.metrics.target_roas) : null,
-        target_cpa: form.metrics.target_cpa ? Number(form.metrics.target_cpa) : null,
-        bid_strategy: form.metrics.bid_strategy || null,
-        attribution_window: form.metrics.attribution || null,
-        pixel_id: form.metrics.pixel_id || null,
-        status: 'Active',
-      }).select().single()
-      alert('Step 3: campaign = ' + JSON.stringify(campaign) + ' | error = ' + JSON.stringify(campError))
-    
 
-      if (campError || !campaign) { alert('Gagal simpan campaign: ' + campError?.message); return }
-
-      const { data: adset, error: adsetError } = await supabase.from('dim_adsets').insert({
-        campaign_id: campaign.campaign_id,
-        client_id: form.client_id,
-        adset_name: form.adset_name,
-        targeting_age_min: Number(form.age_min),
-        targeting_age_max: Number(form.age_max),
-        targeting_gender: form.gender,
-        targeting_locations: form.locations,
-        placements: form.placements.join(', '),
-        status: 'Active',
-      }).select().single()
-
-      if (adsetError || !adset) { alert('Gagal simpan ad set: ' + adsetError?.message); return }
-
-      for (const ad of form.ads) {
-        await supabase.from('dim_ads').insert({
-          adset_id: adset.adset_id,
-          campaign_id: campaign.campaign_id,
-          platform_id: platformId,
+      // ─── Insert Campaign ───────────────────────────────────────────────────
+      const { data: campaign, error: campError } = await supabase
+        .from('dim_campaigns')
+        .insert({
           client_id: form.client_id,
-          ad_name: ad.name,
-          headline: ad.headline,
-          primary_text: ad.primary_text,
-          cta_type: ad.cta,
-          destination_url: ad.destination_url,
+          platform_id: platformId,
+          campaign_name: form.campaign_name,
+          objective: form.objective,
+          budget_type: form.budget_type,
+          daily_budget: form.budget_type === 'daily' ? Number(form.daily_budget) : null,
+          allocated_budget: form.budget_type === 'lifetime' ? Number(form.lifetime_budget) : null,
+          start_date: form.start_date || null,
+          end_date: form.end_date || null,
+          target_roas: form.metrics.target_roas ? Number(form.metrics.target_roas) : null,
+          target_cpa: form.metrics.target_cpa ? Number(form.metrics.target_cpa) : null,
+          bid_strategy: form.metrics.bid_strategy || null,
+          attribution_window: form.metrics.attribution || null,
+          pixel_id: form.metrics.pixel_id || null,
           status: 'Active',
         })
+        .select()
+        .single()
+
+      if (campError || !campaign) {
+        setSubmitError(`Gagal menyimpan campaign: ${campError?.message ?? 'data null'}`)
+        return
       }
+
+      // ─── Insert Ad Set ─────────────────────────────────────────────────────
+      const { data: adset, error: adsetError } = await supabase
+        .from('dim_adsets')
+        .insert({
+          campaign_id: campaign.campaign_id,
+          client_id: form.client_id,
+          adset_name: form.adset_name,
+          targeting_age_min: Number(form.age_min),
+          targeting_age_max: Number(form.age_max),
+          targeting_gender: form.gender,
+          targeting_locations: form.locations,
+          placements: form.placements.join(', '),
+          status: 'Active',
+        })
+        .select()
+        .single()
+
+      if (adsetError || !adset) {
+        setSubmitError(`Gagal menyimpan ad set: ${adsetError?.message ?? 'data null'}`)
+        return
+      }
+
+      // ─── Insert Ads ────────────────────────────────────────────────────────
+      for (const ad of form.ads) {
+        const { error: adError } = await supabase
+          .from('dim_ads')
+          .insert({
+            adset_id: adset.adset_id,
+            campaign_id: campaign.campaign_id,
+            platform_id: platformId,
+            client_id: form.client_id,
+            ad_name: ad.name,
+            headline: ad.headline,
+            primary_text: ad.primary_text,
+            cta_type: ad.cta,
+            destination_url: ad.destination_url,
+            status: 'Active',
+          })
+
+        if (adError) {
+          // Non-fatal: log tapi lanjut — jangan batalkan seluruh submit karena 1 ad gagal
+          console.error(`Gagal simpan ad "${ad.name}":`, adError.message)
+        }
+      }
+
       setSubmitted(true)
+
     } catch (err) {
-      alert('Terjadi kesalahan: ' + err)
+      const msg = err instanceof Error ? err.message : String(err)
+      setSubmitError(`Terjadi kesalahan tidak terduga: ${msg}`)
     } finally {
       setLoading(false)
     }
@@ -307,6 +385,7 @@ export default function AdsSettingTab() {
 
   const selectedClient = clients.find(c => c.client_id === form.client_id)
 
+  // ─── Success State ─────────────────────────────────────────────────────────
   if (submitted) {
     return (
       <div style={{ maxWidth: '600px', margin: '60px auto', textAlign: 'center' }}>
@@ -315,17 +394,23 @@ export default function AdsSettingTab() {
         <div style={{ fontSize: '13px', color: '#888', marginBottom: '24px' }}>
           Campaign <b>{form.campaign_name}</b> untuk client <b>{selectedClient?.client_name}</b> platform <b>{form.platform}</b> telah tersimpan.
         </div>
-        <button onClick={() => { setForm(initialForm); setStep(1); setSubmitted(false) }}
-          style={{ padding: '10px 24px', background: '#185FA5', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', fontWeight: 500 }}>
+        <button
+          onClick={() => { setForm(initialForm); setStep(1); setSubmitted(false); setSubmitError(null) }}
+          style={{ padding: '10px 24px', background: '#185FA5', color: '#fff', border: 'none', borderRadius: '8px', fontSize: '13px', cursor: 'pointer', fontWeight: 500 }}
+        >
           Buat Campaign Baru
         </button>
       </div>
     )
   }
 
+  // ─── Main Form ─────────────────────────────────────────────────────────────
   return (
     <div style={{ maxWidth: '900px', margin: '0 auto' }}>
       <StepIndicator current={step} total={5} />
+
+      {/* Error banner global (submit errors) */}
+      {submitError && <ErrorBanner message={submitError} onDismiss={() => setSubmitError(null)} />}
 
       {/* STEP 1 — Client & Platform */}
       {step === 1 && (
@@ -526,19 +611,31 @@ export default function AdsSettingTab() {
               </Grid>
               <div style={{ marginTop: '14px' }}>
                 <Label>Primary text / copy</Label>
-                <textarea value={ad.primary_text} onChange={e => setAd(ad.id, 'primary_text', e.target.value)}
+                <textarea
+                  value={ad.primary_text}
+                  onChange={e => setAd(ad.id, 'primary_text', e.target.value)}
                   placeholder="Tulis copy iklan di sini..."
                   rows={3}
-                  style={{ width: '100%', padding: '8px 10px', fontSize: '12px', border: '0.5px solid rgba(0,0,0,0.2)', borderRadius: '6px', background: '#fff', color: '#1a1a1a', outline: 'none', resize: 'vertical', fontFamily: 'inherit' }} />
+                  style={{ width: '100%', padding: '8px 10px', fontSize: '12px', border: '0.5px solid rgba(0,0,0,0.2)', borderRadius: '6px', background: '#fff', color: '#1a1a1a', outline: 'none', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }}
+                />
               </div>
               <div style={{ marginTop: '14px' }}>
                 <Label>Upload media (gambar / video)</Label>
-                <div onClick={() => fileRefs.current[ad.id]?.click()}
-                  style={{ border: '1.5px dashed rgba(0,0,0,0.15)', borderRadius: '8px', padding: '20px', textAlign: 'center', cursor: 'pointer', background: '#fafaf9', marginBottom: ad.media_previews.length > 0 ? '10px' : '0' }}>
+                <div
+                  onClick={() => fileRefs.current[ad.id]?.click()}
+                  style={{ border: '1.5px dashed rgba(0,0,0,0.15)', borderRadius: '8px', padding: '20px', textAlign: 'center', cursor: 'pointer', background: '#fafaf9', marginBottom: ad.media_previews.length > 0 ? '10px' : '0' }}
+                >
                   <div style={{ fontSize: '20px', marginBottom: '4px' }}>📁</div>
                   <div style={{ fontSize: '12px', color: '#888' }}>Klik untuk upload gambar atau video</div>
                   <div style={{ fontSize: '10px', color: '#aaa', marginTop: '2px' }}>JPG, PNG, MP4, MOV — max 100MB</div>
-                  <input ref={el => { fileRefs.current[ad.id] = el }} type="file" accept="image/*,video/*" multiple style={{ display: 'none' }} onChange={e => handleMedia(ad.id, e.target.files)} />
+                  <input
+                    ref={el => { fileRefs.current[ad.id] = el }}
+                    type="file"
+                    accept="image/*,video/*"
+                    multiple
+                    style={{ display: 'none' }}
+                    onChange={e => handleMedia(ad.id, e.target.files)}
+                  />
                 </div>
                 {ad.media_previews.length > 0 && (
                   <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -551,15 +648,19 @@ export default function AdsSettingTab() {
                 )}
               </div>
               {form.ads.length > 1 && (
-                <button onClick={() => removeAd(ad.id)}
-                  style={{ marginTop: '12px', padding: '6px 12px', background: '#FCEBEB', color: '#A32D2D', border: 'none', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', fontWeight: 500 }}>
+                <button
+                  onClick={() => removeAd(ad.id)}
+                  style={{ marginTop: '12px', padding: '6px 12px', background: '#FCEBEB', color: '#A32D2D', border: 'none', borderRadius: '6px', fontSize: '11px', cursor: 'pointer', fontWeight: 500 }}
+                >
                   Hapus Ad ini
                 </button>
               )}
             </Card>
           ))}
-          <button onClick={addAd}
-            style={{ width: '100%', padding: '12px', border: '1.5px dashed rgba(0,0,0,0.15)', borderRadius: '10px', background: '#fafaf9', color: '#185FA5', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}>
+          <button
+            onClick={addAd}
+            style={{ width: '100%', padding: '12px', border: '1.5px dashed rgba(0,0,0,0.15)', borderRadius: '10px', background: '#fafaf9', color: '#185FA5', fontSize: '12px', fontWeight: 500, cursor: 'pointer' }}
+          >
             + Tambah Ad
           </button>
         </>
@@ -592,7 +693,7 @@ export default function AdsSettingTab() {
               </div>
               <div>
                 <div style={{ fontSize: '11px', color: '#888', marginBottom: '12px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Platform Metrics</div>
-                {Object.entries(form.metrics).map(([k, v]) => (
+                {Object.entries(form.metrics).filter(([, v]) => v).map(([k, v]) => (
                   <ReviewRow key={k} label={k.replace(/_/g, ' ')} value={v} />
                 ))}
               </div>
@@ -617,24 +718,39 @@ export default function AdsSettingTab() {
               </div>
             ))}
           </Card>
+
+          {/* Logged-in user indicator */}
+          {user && (
+            <div style={{ fontSize: '11px', color: '#888', textAlign: 'right', marginBottom: '8px' }}>
+              Submit sebagai: <b>{user.email}</b>
+            </div>
+          )}
         </>
       )}
 
       {/* Navigation */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '20px', paddingTop: '16px', borderTop: '0.5px solid rgba(0,0,0,0.08)' }}>
-        <button onClick={() => setStep(s => Math.max(1, s - 1))} disabled={step === 1}
-          style={{ padding: '10px 20px', borderRadius: '8px', border: '0.5px solid rgba(0,0,0,0.15)', background: '#fff', color: '#555', fontSize: '12px', cursor: step === 1 ? 'not-allowed' : 'pointer', opacity: step === 1 ? 0.4 : 1 }}>
+        <button
+          onClick={() => setStep(s => Math.max(1, s - 1))}
+          disabled={step === 1}
+          style={{ padding: '10px 20px', borderRadius: '8px', border: '0.5px solid rgba(0,0,0,0.15)', background: '#fff', color: '#555', fontSize: '12px', cursor: step === 1 ? 'not-allowed' : 'pointer', opacity: step === 1 ? 0.4 : 1 }}
+        >
           ← Kembali
         </button>
         <div style={{ fontSize: '11px', color: '#888' }}>Step {step} dari 5</div>
         {step < 5 ? (
-          <button onClick={handleNext}
-            style={{ padding: '10px 24px', borderRadius: '8px', border: 'none', background: '#185FA5', color: '#fff', fontSize: '12px', cursor: 'pointer', fontWeight: 500 }}>
+          <button
+            onClick={handleNext}
+            style={{ padding: '10px 24px', borderRadius: '8px', border: 'none', background: '#185FA5', color: '#fff', fontSize: '12px', cursor: 'pointer', fontWeight: 500 }}
+          >
             Lanjut →
           </button>
         ) : (
-          <button onClick={handleSubmit} disabled={loading}
-            style={{ padding: '10px 24px', borderRadius: '8px', border: 'none', background: '#3B6D11', color: '#fff', fontSize: '12px', cursor: 'pointer', fontWeight: 500, opacity: loading ? 0.7 : 1 }}>
+          <button
+            onClick={handleSubmit}
+            disabled={loading}
+            style={{ padding: '10px 24px', borderRadius: '8px', border: 'none', background: loading ? '#888' : '#3B6D11', color: '#fff', fontSize: '12px', cursor: loading ? 'not-allowed' : 'pointer', fontWeight: 500, transition: 'background 0.2s' }}
+          >
             {loading ? 'Menyimpan...' : 'Submit Campaign ✓'}
           </button>
         )}
